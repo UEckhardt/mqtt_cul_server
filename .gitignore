@@ -4,3 +4,4 @@
 __pycache__/
 /.direnv
 /.pytest/
+/mqtt_cul_server.ini
