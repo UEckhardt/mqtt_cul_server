@@ -7,7 +7,7 @@ import serial
 class Cul(object):
     """Helper class to encapsulate serial communication with CUL device"""
 
-    def __init__(self, serial_port, baud_rate=115200, test=False):
+    def __init__(self, serial_port : str, baud_rate=115200, test=False):
         """Create instance with a given serial port"""
         if test:
             self.serial = sys.stderr
@@ -20,34 +20,33 @@ class Cul(object):
                 self.serial = serial.Serial(
                     port=serial_port, baudrate=baud_rate, timeout=1
                 )
+             
             except serial.SerialException as e:
                 logging.error("Could not open CUL device: %s", e)
 
-    def get_cul_version(self):
+    def get_cul_version(self) -> str:
         """Get CUL version"""
         self.serial.write("V\n")
         self.serial.flush()
-        version = self.serial.readline()
-        return version
+        return self.serial.readline().decode()
+    
+    def read(self) -> str:
+        return self.serial.readline().decode()
 
-    def send_command(self, command_string):
+    def send_command(self, command_string : bytes) -> None:
         """Send command string to serial port with CUL device"""
         if self.test:
-            print(command_string.decode())
+            print(command_string)
         else:
             try:
                 self.serial.write(command_string)
-
-                # FIXME: this is lacrosse-specific and should not be in this class
-                self.serial.write(b"Nr1\n")
-
                 self.serial.flush()
             except serial.SerialException as e:
                 logging.error("Could not send command to CUL device %s", e)
                 sys.exit(1)
 
 
-    def listen(self, callback):
+    def listen(self, callback) -> None:
         while True:
             # readline() blocks until message is available
             try:

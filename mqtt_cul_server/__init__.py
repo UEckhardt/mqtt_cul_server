@@ -23,7 +23,7 @@ class MQTT_CUL_Server:
         if config["somfy"].getboolean("enabled"):
             self.components["somfy"] = somfy_shutter.SomfyShutter(self.cul, self.mqtt_client, self.prefix, statedir)
         if config["lacrosse"].getboolean("enabled"):
-            self.components["lacrosse"] = lacrosse.LaCrosse(self.cul, self.mqtt_client, self.prefix)
+            self.components["lacrosse"] = lacrosse.LaCrosse(self.cul, self.mqtt_client, self.prefix, config["lacrosse"])
 
     def get_mqtt_client(self, mqtt_config):
         mqtt_client = mqtt.Client()

@@ -4,6 +4,7 @@ import sys
 import os
 from pathlib import Path
 from enum import Enum
+import paho.mqtt.client as mqtt
 
 sys.path.append(os.path.dirname(str(Path(__file__).parent)))
 import cul
@@ -27,23 +28,28 @@ class LaCrosse:
         LACROSSE = 1
         TFA = 2
 
-    def __init__(self, cul, mqtt_client, prefix):
+    def __init__(self, cul, mqtt_client, prefix="", config={}):
         self.cul = cul
         self.prefix = prefix
         self.mqtt_client = mqtt_client
         self.devices = []
-        self.set_listening_mode()
+        self.set_listening_mode(config)
 
     @classmethod
     def get_component_name(cls):
         return "lacrosse"
 
-    def set_listening_mode(self):
-        """Enable listening for Native RF mode 1"""
-        command_string = "Nr1\n".encode()
-        self.cul.send_command(command_string)
+    def set_listening_mode(self, config: dict) -> None:
+        """Enable listening """
+        if "init_string" in config:
+            commands = str(config["init_string"]).split(",")
+            for s in commands:
+                self.cul.send_command(s.encode() )
+                resp = self.cul.serial.read().decode()
+                logging.info(f"Enable listening {resp}")
 
-    def send_discovery_lacrosse(self, parsed_data):
+
+    def send_discovery_lacrosse(self, parsed_data: dict) -> None:
         """
         Send Home Assistant - compatible discovery messages
 
@@ -108,7 +114,7 @@ class LaCrosse:
         topic = self.prefix + "/sensor/lacrosse/" + unit_id + "_battery/config"
         self.mqtt_client.publish(topic, payload=json.dumps(configuration), retain=True)
 
-    def crc(self, data):
+    def crc(self, data: bytes) -> int:
         """calculate CRC-8 with poly = 0x31"""
         crc = 0
         for byte in data:
@@ -121,7 +127,7 @@ class LaCrosse:
                 val = (val << 1) & 0xFF
         return crc
 
-    def decode_lacrosse(self, data) -> dict:
+    def decode_lacrosse(self, data: str) -> dict:
         ID = slice(4, 6)
         TEMPERATURE = slice(6, 9)
         HUMIDITY = slice(9, 11)
@@ -159,7 +165,7 @@ class LaCrosse:
             parsed_data = {}
         return parsed_data
 
-    def decode_tfa(self, data) -> dict:
+    def decode_tfa(self, data: str) -> dict:
         ID = slice(4, 5)
         BAT = slice(5, 6)
         TEMPERATURE = slice(6, 9)
@@ -203,7 +209,7 @@ class LaCrosse:
             parsed_data["humidity"] = int(
                 data[HUMIDITY][0] + data[HUMIDITY][1], base=16
             )
-            parsed_data["battery"] = 100 * (int(data[BAT], base=16) / 15.0)
+            parsed_data["battery"] = round(100 * (int(data[BAT], base=16) / 15.0))
             parsed_data["wind_avg"] = 1.22 * int(
                 data[WIND_AVG][0] + data[WIND_AVG][1], base=16
             )
@@ -253,18 +259,21 @@ class LaCrosse:
             self.mqtt_client.publish(topic, payload=json.dumps(decoded), retain=False)
 
 
-
 def test_decode_data():
     """Test LaCrosse data parsing"""
     cul_device = cul.Cul("", test=True)
-    lacrosse = LaCrosse(cul_device, None, None)
-    assert lacrosse.decode_rx_data("N0199E6282EC7AAAA0000719199") == {
+    lacrosse = LaCrosse(cul_device, None)
+    type, data = lacrosse.decode_rx_data("N0199E6282EC7AAAA0000719199")
+    assert type, lacrosse.SENSOR_TYPE.LACROSSE
+    assert data == {
         "id": 7,
         "battery": 100,
         "temperature": 22.8,
         "humidity": 46,
     }
-    assert lacrosse.decode_rx_data("N019986373FC9AAAA0000000783") == {
+    type, data = lacrosse.decode_rx_data("N019986373FC9AAAA0000000783")
+    assert type, lacrosse.SENSOR_TYPE.LACROSSE
+    assert data == {
         "id": 6,
         "battery": 50,
         "temperature": 23.7,
@@ -274,7 +283,7 @@ def test_decode_data():
 
 def test_crc():
     cul_device = cul.Cul("", test=True)
-    lacrosse = LaCrosse(cul_device, None, None)
+    lacrosse = LaCrosse(cul_device, None)
     good_messages = [
         "N019EC615414BAAAA0000571601",
         "N019986373FC9AAAA0000109880",
@@ -285,14 +294,16 @@ def test_crc():
         "N019ECE33398CAAAA0000A17C69",
     ]
     for m in good_messages:
-        assert lacrosse.decode_rx_data(m)
+        type, data = lacrosse.decode_rx_data(m)
+        assert type, lacrosse.SENSOR_TYPE.LACROSSE
     for m in bad_messages:
-        assert not lacrosse.decode_rx_data(m)
+        type, data = lacrosse.decode_rx_data(m)
+        assert type, lacrosse.SENSOR_TYPE.INVALID
 
 
 def test_real_data():
     cul_device = cul.Cul("", test=True)
-    lacrosse = LaCrosse(cul_device, None, None)
+    lacrosse = LaCrosse(cul_device, None)
     messages = [
         "N019A86414280AAAA0000480473",
         "N019A864143B1AAAA00000B3897",
@@ -305,13 +316,20 @@ def test_real_data():
 
 def test_tfa_data():
     cul_device = cul.Cul("", test=True)
-    lacrosse = LaCrosse(cul_device, None, None)
-    # Temp 19.8 Hum 0 Rain 955 Bat 160
-    # Wind avg 7.32
-    # Wind max 15.86
-    messages = ["N0159A0C600060D03BBD0000A19"]
-    for m in messages:
-        logging.info(lacrosse.decode_rx_data(m))
+    lacrosse = LaCrosse(cul_device, None)
+    message = "N0159A0D500020703BB7C001555"
+    type, data = lacrosse.decode_rx_data(message)
+    assert type, lacrosse.SENSOR_TYPE.LACROSSE
+    logging.info(data)
+    assert data == {
+        "id": 9,
+        "temperature": 21.3,
+        "humidity": 0,
+        "battery": 67,
+        "wind_avg": 2.44,
+        "wind_gust": 8.54,
+        "rain": 955,
+    }
 
 
 if __name__ == "__main__":
@@ -323,3 +341,4 @@ if __name__ == "__main__":
     test_tfa_data()
     logger.info("Test lacrosse")
     test_real_data()
+    test_decode_data()
